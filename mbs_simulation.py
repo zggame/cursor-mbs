@@ -6,7 +6,26 @@ from scipy import stats
 import warnings
 import multiprocessing as mp
 from functools import partial
+import pandas as pd
 warnings.filterwarnings('ignore')
+
+@dataclass
+class DetailedLossRecord:
+    """Detailed loss record for each simulation path and tranche"""
+    simulation_id: int
+    tranche_name: str
+    total_loss: float
+    loss_percentage: float
+    tranche_principal: float
+    tranche_loss: float
+    tranche_payoff: float
+    monthly_losses: List[float]
+    cumulative_losses: List[float]
+    worst_month_loss: float
+    worst_month: int
+    defaulted_loans: int
+    total_loans: int
+    default_rate: float
 
 @dataclass
 class Loan:
@@ -240,9 +259,11 @@ class MBSSimulation:
         
         return uniform_vars
     
-    def run_monte_carlo(self, n_simulations: int = 1000, seed: int = 42, use_parallel: bool = True, n_jobs: Optional[int] = None) -> Dict:
-        """Run Monte Carlo simulation with optional parallel processing"""
-        if use_parallel and n_simulations > 100:  # Only use parallel for larger simulations
+    def run_monte_carlo(self, n_simulations: int = 1000, seed: int = 42, use_parallel: bool = True, n_jobs: Optional[int] = None, detailed_tracking: bool = False) -> Dict:
+        """Run Monte Carlo simulation with optional parallel processing and detailed loss tracking"""
+        if detailed_tracking:
+            return self._run_monte_carlo_with_detailed_tracking(n_simulations, seed, use_parallel, n_jobs)
+        elif use_parallel and n_simulations > 100:  # Only use parallel for larger simulations
             return self._run_monte_carlo_parallel(n_simulations, seed, n_jobs)
         else:
             return self._run_monte_carlo_sequential(n_simulations, seed)
@@ -308,6 +329,111 @@ class MBSSimulation:
             'monthly_losses': monthly_losses,
             'statistics': self._calculate_statistics(tranche_payoffs),
             'stress_scenarios': self._calculate_stress_scenarios(tranche_payoffs)
+        }
+        
+        self.simulation_results = results
+        return results
+    
+    def _run_monte_carlo_with_detailed_tracking(self, n_simulations: int, seed: int, use_parallel: bool, n_jobs: Optional[int] = None) -> Dict:
+        """Run Monte Carlo simulation with detailed loss tracking for tail risk analysis"""
+        np.random.seed(seed)
+        
+        # Generate correlated random variables for all simulations
+        correlated_uniforms = self._simulate_correlated_defaults(n_simulations)
+        
+        # Storage for detailed results
+        detailed_loss_records = []
+        tranche_payoffs = {tranche.name: [] for tranche in self.tranches}
+        monthly_cashflows = []
+        monthly_losses = []
+        
+        total_principal = sum(loan.principal for loan in self.loans)
+        
+        for sim in range(n_simulations):
+            # Reset loans for this simulation
+            for loan in self.loans:
+                loan.remaining_balance = loan.principal
+            
+            # Track detailed results for this simulation
+            sim_monthly_cashflow = []
+            sim_monthly_loss = []
+            sim_cumulative_losses = []
+            defaulted_loans = 0
+            
+            for month in range(self.security_term_months):
+                month_cashflow = 0.0
+                month_loss = 0.0
+                
+                # Simulate each loan for this month
+                for i, loan in enumerate(self.loans):
+                    if loan.remaining_balance > 0:
+                        # Use correlated random number for this loan/simulation
+                        random_state = np.random.RandomState()
+                        random_state.seed(int(correlated_uniforms[sim, i] * 1e9 + month))
+                        
+                        result = self._simulate_loan_month(loan, random_state)
+                        
+                        month_cashflow += result['payment']
+                        month_loss += result['loss']
+                        loan.remaining_balance = result['remaining_balance']
+                        
+                        # Track defaults
+                        if result['defaulted']:
+                            defaulted_loans += 1
+                
+                sim_monthly_cashflow.append(month_cashflow)
+                sim_monthly_loss.append(month_loss)
+                sim_cumulative_losses.append(sum(sim_monthly_loss))
+            
+            # Calculate cumulative losses and tranche payoffs
+            cumulative_loss = sum(sim_monthly_loss)
+            loss_percentage = cumulative_loss / total_principal
+            
+            # Find worst month
+            worst_month = np.argmax(sim_monthly_loss)
+            worst_month_loss = sim_monthly_loss[worst_month]
+            
+            # Calculate default rate
+            default_rate = defaulted_loans / self.n_loans
+            
+            # Create detailed loss records for each tranche
+            for tranche in self.tranches:
+                tranche_loss = tranche.get_loss_share(cumulative_loss, total_principal)
+                tranche_payoff = tranche.principal - tranche_loss
+                
+                # Create detailed loss record
+                loss_record = DetailedLossRecord(
+                    simulation_id=sim,
+                    tranche_name=tranche.name,
+                    total_loss=cumulative_loss,
+                    loss_percentage=loss_percentage,
+                    tranche_principal=tranche.principal,
+                    tranche_loss=tranche_loss,
+                    tranche_payoff=tranche_payoff,
+                    monthly_losses=sim_monthly_loss.copy(),
+                    cumulative_losses=sim_cumulative_losses.copy(),
+                    worst_month_loss=worst_month_loss,
+                    worst_month=worst_month,
+                    defaulted_loans=defaulted_loans,
+                    total_loans=self.n_loans,
+                    default_rate=default_rate
+                )
+                
+                detailed_loss_records.append(loss_record)
+                tranche_payoffs[tranche.name].append(tranche_payoff)
+            
+            monthly_cashflows.append(sim_monthly_cashflow)
+            monthly_losses.append(sim_monthly_loss)
+        
+        # Calculate statistics including tail risk metrics
+        results = {
+            'tranche_payoffs': tranche_payoffs,
+            'monthly_cashflows': monthly_cashflows,
+            'monthly_losses': monthly_losses,
+            'detailed_loss_records': detailed_loss_records,
+            'statistics': self._calculate_statistics(tranche_payoffs),
+            'stress_scenarios': self._calculate_stress_scenarios(tranche_payoffs),
+            'tail_risk_analysis': self._calculate_tail_risk_metrics(detailed_loss_records)
         }
         
         self.simulation_results = results
@@ -474,6 +600,172 @@ class MBSSimulation:
             }
         
         return stress_dict
+    
+    def _calculate_tail_risk_metrics(self, detailed_loss_records: List[DetailedLossRecord]) -> Dict:
+        """Calculate comprehensive tail risk metrics"""
+        # Convert to DataFrame for easier analysis
+        df = pd.DataFrame([
+            {
+                'simulation_id': record.simulation_id,
+                'tranche_name': record.tranche_name,
+                'total_loss': record.total_loss,
+                'loss_percentage': record.loss_percentage,
+                'tranche_loss': record.tranche_loss,
+                'tranche_payoff': record.tranche_payoff,
+                'worst_month_loss': record.worst_month_loss,
+                'worst_month': record.worst_month,
+                'defaulted_loans': record.defaulted_loans,
+                'default_rate': record.default_rate
+            }
+            for record in detailed_loss_records
+        ])
+        
+        tail_risk_metrics = {}
+        
+        for tranche_name in df['tranche_name'].unique():
+            tranche_data = df[df['tranche_name'] == tranche_name]
+            
+            # Sort by tranche payoff (worst to best)
+            tranche_data_sorted = tranche_data.sort_values('tranche_payoff')
+            
+            # Calculate percentiles for worst cases
+            n_simulations = len(tranche_data)
+            worst_5pct_idx = int(0.05 * n_simulations)
+            worst_1pct_idx = int(0.01 * n_simulations)
+            
+            # Worst 5% scenarios
+            worst_5pct = tranche_data_sorted.iloc[:worst_5pct_idx]
+            worst_1pct = tranche_data_sorted.iloc[:worst_1pct_idx]
+            
+            tail_risk_metrics[tranche_name] = {
+                # Worst 5% metrics
+                'worst_5pct_count': len(worst_5pct),
+                'worst_5pct_avg_payoff': worst_5pct['tranche_payoff'].mean(),
+                'worst_5pct_avg_loss': worst_5pct['tranche_loss'].mean(),
+                'worst_5pct_avg_total_loss': worst_5pct['total_loss'].mean(),
+                'worst_5pct_avg_loss_pct': worst_5pct['loss_percentage'].mean(),
+                'worst_5pct_avg_default_rate': worst_5pct['default_rate'].mean(),
+                'worst_5pct_avg_worst_month_loss': worst_5pct['worst_month_loss'].mean(),
+                
+                # Worst 1% metrics
+                'worst_1pct_count': len(worst_1pct),
+                'worst_1pct_avg_payoff': worst_1pct['tranche_payoff'].mean(),
+                'worst_1pct_avg_loss': worst_1pct['tranche_loss'].mean(),
+                'worst_1pct_avg_total_loss': worst_1pct['total_loss'].mean(),
+                'worst_1pct_avg_loss_pct': worst_1pct['loss_percentage'].mean(),
+                'worst_1pct_avg_default_rate': worst_1pct['default_rate'].mean(),
+                'worst_1pct_avg_worst_month_loss': worst_1pct['worst_month_loss'].mean(),
+                
+                # Overall statistics
+                'total_simulations': n_simulations,
+                'avg_payoff': tranche_data['tranche_payoff'].mean(),
+                'avg_loss': tranche_data['tranche_loss'].mean(),
+                'avg_total_loss': tranche_data['total_loss'].mean(),
+                'avg_loss_pct': tranche_data['loss_percentage'].mean(),
+                'avg_default_rate': tranche_data['default_rate'].mean(),
+                
+                # Risk metrics
+                'var_95': np.percentile(tranche_data['tranche_payoff'], 5),
+                'var_99': np.percentile(tranche_data['tranche_payoff'], 1),
+                'expected_shortfall_95': tranche_data[tranche_data['tranche_payoff'] <= np.percentile(tranche_data['tranche_payoff'], 5)]['tranche_payoff'].mean(),
+                'expected_shortfall_99': tranche_data[tranche_data['tranche_payoff'] <= np.percentile(tranche_data['tranche_payoff'], 1)]['tranche_payoff'].mean(),
+                
+                # Worst case details
+                'worst_case_payoff': tranche_data['tranche_payoff'].min(),
+                'worst_case_loss': tranche_data['tranche_loss'].max(),
+                'worst_case_total_loss': tranche_data['total_loss'].max(),
+                'worst_case_loss_pct': tranche_data['loss_percentage'].max(),
+                'worst_case_default_rate': tranche_data['default_rate'].max(),
+                'worst_case_worst_month_loss': tranche_data['worst_month_loss'].max()
+            }
+        
+        return tail_risk_metrics
+    
+    def get_worst_case_scenarios(self, percentile: float = 5.0) -> Dict:
+        """Get detailed information about worst case scenarios"""
+        if not hasattr(self, 'simulation_results') or 'detailed_loss_records' not in self.simulation_results:
+            raise ValueError("Detailed loss tracking not enabled. Run simulation with detailed_tracking=True")
+        
+        detailed_records = self.simulation_results['detailed_loss_records']
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([
+            {
+                'simulation_id': record.simulation_id,
+                'tranche_name': record.tranche_name,
+                'total_loss': record.total_loss,
+                'loss_percentage': record.loss_percentage,
+                'tranche_loss': record.tranche_loss,
+                'tranche_payoff': record.tranche_payoff,
+                'worst_month_loss': record.worst_month_loss,
+                'worst_month': record.worst_month,
+                'defaulted_loans': record.defaulted_loans,
+                'default_rate': record.default_rate
+            }
+            for record in detailed_records
+        ])
+        
+        worst_scenarios = {}
+        
+        for tranche_name in df['tranche_name'].unique():
+            tranche_data = df[df['tranche_name'] == tranche_name]
+            
+            # Sort by tranche payoff (worst to best)
+            tranche_data_sorted = tranche_data.sort_values('tranche_payoff')
+            
+            # Calculate threshold for worst cases
+            n_simulations = len(tranche_data)
+            worst_count = int((percentile / 100.0) * n_simulations)
+            
+            # Get worst scenarios
+            worst_scenarios_data = tranche_data_sorted.iloc[:worst_count]
+            
+            worst_scenarios[tranche_name] = {
+                'scenarios': worst_scenarios_data.to_dict('records'),
+                'summary': {
+                    'count': len(worst_scenarios_data),
+                    'percentile': percentile,
+                    'avg_payoff': worst_scenarios_data['tranche_payoff'].mean(),
+                    'avg_loss': worst_scenarios_data['tranche_loss'].mean(),
+                    'avg_total_loss': worst_scenarios_data['total_loss'].mean(),
+                    'avg_loss_pct': worst_scenarios_data['loss_percentage'].mean(),
+                    'avg_default_rate': worst_scenarios_data['default_rate'].mean(),
+                    'min_payoff': worst_scenarios_data['tranche_payoff'].min(),
+                    'max_loss': worst_scenarios_data['tranche_loss'].max()
+                }
+            }
+        
+        return worst_scenarios
+    
+    def export_detailed_loss_data(self, filename: str = "detailed_loss_data.csv") -> str:
+        """Export detailed loss data to CSV for further analysis"""
+        if not hasattr(self, 'simulation_results') or 'detailed_loss_records' not in self.simulation_results:
+            raise ValueError("Detailed loss tracking not enabled. Run simulation with detailed_tracking=True")
+        
+        detailed_records = self.simulation_results['detailed_loss_records']
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([
+            {
+                'simulation_id': record.simulation_id,
+                'tranche_name': record.tranche_name,
+                'total_loss': record.total_loss,
+                'loss_percentage': record.loss_percentage,
+                'tranche_principal': record.tranche_principal,
+                'tranche_loss': record.tranche_loss,
+                'tranche_payoff': record.tranche_payoff,
+                'worst_month_loss': record.worst_month_loss,
+                'worst_month': record.worst_month,
+                'defaulted_loans': record.defaulted_loans,
+                'total_loans': record.total_loans,
+                'default_rate': record.default_rate
+            }
+            for record in detailed_records
+        ])
+        
+        # Export to CSV
+        df.to_csv(filename, index=False)
+        return filename
 
 class MBSVisualizer:
     """Visualization class for MBS simulation results"""

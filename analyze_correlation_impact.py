@@ -51,12 +51,12 @@ def analyze_correlation_impact():
     
     mezzanine_data = []
     for corr in correlations:
-        payoffs = results_by_correlation[corr]['tranche_payoffs']['Mezzanine']
+        payoffs = np.array(results_by_correlation[corr]['tranche_payoffs']['Mezzanine'])
         mean_payoff = np.mean(payoffs)
         std_payoff = np.std(payoffs)
         var_95 = np.percentile(payoffs, 5)
         var_99 = np.percentile(payoffs, 1)
-        expected_shortfall_95 = np.mean(payoffs[payoffs <= var_95])
+        expected_shortfall_95 = np.mean(payoffs[payoffs <= var_95]) if np.any(payoffs <= var_95) else var_95
         
         mezzanine_data.append({
             'correlation': corr,
@@ -81,12 +81,12 @@ def analyze_correlation_impact():
     
     senior_data = []
     for corr in correlations:
-        payoffs = results_by_correlation[corr]['tranche_payoffs']['Senior']
+        payoffs = np.array(results_by_correlation[corr]['tranche_payoffs']['Senior'])
         mean_payoff = np.mean(payoffs)
         std_payoff = np.std(payoffs)
         var_95 = np.percentile(payoffs, 5)
         var_99 = np.percentile(payoffs, 1)
-        expected_shortfall_95 = np.mean(payoffs[payoffs <= var_95])
+        expected_shortfall_95 = np.mean(payoffs[payoffs <= var_95]) if np.any(payoffs <= var_95) else var_95
         
         senior_data.append({
             'correlation': corr,
