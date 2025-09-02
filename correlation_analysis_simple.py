@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Simplified Correlation Impact Analysis
-======================================
+=====================================
 
-This script analyzes correlation impact on tail risk with a simple test first,
-then runs the full analysis.
+This script analyzes correlation impact on tail risk with a flexible function
+that takes paths and correlations as input parameters.
 
 Test: 2 correlations (0.01, 0.1) with 50 paths
 Full: 5 correlations (0.01, 0.1, 0.2, 0.3, 0.4) with 1000 paths
@@ -17,15 +17,21 @@ from mbs_simulation import MBSSimulation
 from datetime import datetime
 import time
 
-def run_test_analysis():
-    """Run test analysis with 2 correlations and 50 paths"""
-    print("=== TEST ANALYSIS ===")
-    print("Testing correlations: 0.01, 0.1")
-    print("Using 50 paths per correlation")
-    print()
+def run_correlation_analysis(correlations, n_paths, n_loans=100, mode="analysis"):
+    """
+    Run correlation impact analysis with specified parameters
     
-    # Test correlation levels
-    correlations = [0.01, 0.1]
+    Args:
+        correlations (list): List of correlation values to test
+        n_paths (int): Number of simulation paths per correlation
+        n_loans (int): Number of loans in the pool
+        mode (str): Analysis mode for naming outputs
+    """
+    print(f"=== {mode.upper()} ANALYSIS ===")
+    print(f"Testing correlations: {', '.join(map(str, correlations))}")
+    print(f"Using {n_paths} paths per correlation")
+    print(f"Pool size: {n_loans} loans")
+    print()
     
     # Storage for results
     results_summary = {}
@@ -36,7 +42,7 @@ def run_test_analysis():
         
         # Create simulation with current correlation
         simulation = MBSSimulation(
-            n_loans=50,  # Smaller pool for faster execution
+            n_loans=n_loans,
             correlation=correlation,
             attachment_point=0.02,  # 2% attachment point
             detachment_point=0.08,  # 8% detachment point
@@ -47,7 +53,7 @@ def run_test_analysis():
         
         # Run simulation with detailed tracking
         results = simulation.run_monte_carlo(
-            n_simulations=50,  # Small number for quick testing
+            n_simulations=n_paths,
             seed=42 + i,  # Different seed for each correlation
             detailed_tracking=True
         )
@@ -76,83 +82,16 @@ def run_test_analysis():
         print()
     
     # Print summary results
-    print("=== TEST RESULTS ===")
-    print_correlation_summary(results_summary)
-    
-    # Create simple visualization
-    create_visualization(results_summary, "test")
-    
-    return results_summary
-
-def run_full_analysis():
-    """Run full analysis with 5 correlations and 1000 paths"""
-    print("\n" + "="*60)
-    print("=== FULL ANALYSIS ===")
-    print("Testing correlations: 0.01, 0.1, 0.2, 0.3, 0.4")
-    print("Using 1000 paths per correlation")
-    print("="*60)
-    print()
-    
-    # Full correlation levels
-    correlations = [0.01, 0.1, 0.2, 0.3, 0.4]
-    
-    # Storage for results
-    results_summary = {}
-    
-    for i, correlation in enumerate(correlations):
-        print(f"Running correlation {correlation} ({i+1}/{len(correlations)})...")
-        start_time = time.time()
-        
-        # Create simulation with current correlation
-        simulation = MBSSimulation(
-            n_loans=100,  # Larger pool for better analysis
-            correlation=correlation,
-            attachment_point=0.02,  # 2% attachment point
-            detachment_point=0.08,  # 8% detachment point
-            security_term_years=7,
-            loan_term_years=10,
-            amortization_years=30
-        )
-        
-        # Run simulation with detailed tracking
-        results = simulation.run_monte_carlo(
-            n_simulations=1000,  # Full analysis
-            seed=42 + i,  # Different seed for each correlation
-            detailed_tracking=True
-        )
-        
-        # Store key metrics
-        results_summary[correlation] = {}
-        for tranche_name, metrics in results['tail_risk_analysis'].items():
-            results_summary[correlation][tranche_name] = {
-                'avg_payoff': metrics['avg_payoff'],
-                'worst_5pct_avg_payoff': metrics['worst_5pct_avg_payoff'],
-                'worst_1pct_avg_payoff': metrics['worst_1pct_avg_payoff'],
-                'worst_case_payoff': metrics['worst_case_payoff'],
-                'avg_loss_pct': metrics['avg_loss_pct'],
-                'worst_5pct_avg_loss_pct': metrics['worst_5pct_avg_loss_pct'],
-                'worst_1pct_avg_loss_pct': metrics['worst_1pct_avg_loss_pct'],
-                'worst_case_loss_pct': metrics['worst_case_loss_pct'],
-                'avg_default_rate': metrics['avg_default_rate'],
-                'worst_5pct_avg_default_rate': metrics['worst_5pct_avg_default_rate'],
-                'worst_1pct_avg_default_rate': metrics['worst_1pct_avg_default_rate'],
-                'worst_case_default_rate': metrics['worst_case_default_rate']
-            }
-        
-        elapsed_time = time.time() - start_time
-        print(f"  Completed in {elapsed_time:.1f} seconds")
-        print(f"  Total loss records: {len(results['detailed_loss_records'])}")
-        print()
-    
-    # Print summary results
-    print("=== FULL ANALYSIS RESULTS ===")
+    print(f"=== {mode.upper()} RESULTS ===")
     print_correlation_summary(results_summary)
     
     # Export results to CSV
-    export_results_to_csv(results_summary, "full_correlation_analysis.csv")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"correlation_analysis_{mode}_{timestamp}.csv"
+    export_results_to_csv(results_summary, csv_filename)
     
     # Create visualization
-    create_visualization(results_summary, "full")
+    create_visualization(results_summary, mode)
     
     return results_summary
 
@@ -294,22 +233,34 @@ def main():
     print()
     
     # Step 1: Run test analysis
-    test_results = run_test_analysis()
+    test_correlations = [0.01, 0.1]
+    test_results = run_correlation_analysis(
+        correlations=test_correlations,
+        n_paths=50,
+        n_loans=50,
+        mode="test"
+    )
     
     print("\n" + "="*60)
     print("TEST ANALYSIS COMPLETED!")
     print("="*60)
     
     # Step 2: Run full analysis
-    full_results = run_full_analysis()
+    full_correlations = [0.01, 0.1, 0.2, 0.3, 0.4]
+    full_results = run_correlation_analysis(
+        correlations=full_correlations,
+        n_paths=1000,
+        n_loans=100,
+        mode="full"
+    )
     
     print("\n" + "="*60)
     print("FULL ANALYSIS COMPLETED!")
     print("="*60)
     
     print("\n=== SUMMARY ===")
-    print("Test analysis: 2 correlations (0.01, 0.1) with 50 paths each")
-    print("Full analysis: 5 correlations (0.01, 0.1, 0.2, 0.3, 0.4) with 1000 paths each")
+    print(f"Test analysis: {len(test_correlations)} correlations with 50 paths each")
+    print(f"Full analysis: {len(full_correlations)} correlations with 1000 paths each")
     print("All results exported to CSV files")
     print("Visualizations saved as PNG files")
 
