@@ -442,7 +442,7 @@ class MBSSimulation:
     def _run_monte_carlo_parallel(self, n_simulations: int, seed: int, n_jobs: Optional[int] = None) -> Dict:
         """Run Monte Carlo simulation using parallel processing"""
         if n_jobs is None:
-            n_jobs = min(mp.cpu_count(), n_simulations // 50)  # Don't use more cores than needed
+            n_jobs = min(mp.cpu_count()-1, n_simulations // 50)  # Don't use more cores than needed
         
         # Generate correlated random variables for all simulations
         np.random.seed(seed)
@@ -450,6 +450,8 @@ class MBSSimulation:
         
         # Split simulations across processes
         chunk_size = max(1, n_simulations // n_jobs)
+        print(f"Chunk size: {chunk_size}, n_jobs: {n_jobs}")
+
         simulation_chunks = []
         
         for i in range(0, n_simulations, chunk_size):
@@ -766,6 +768,97 @@ class MBSSimulation:
         # Export to CSV
         df.to_csv(filename, index=False)
         return filename
+
+    def dump_loan_information(self) -> Dict:
+        """Dump detailed loan information including all assumptions"""
+        loan_info = {
+            'summary': {
+                'total_loans': self.n_loans,
+                'total_principal': sum(loan.principal for loan in self.loans),
+                'average_loan_size': np.mean([loan.principal for loan in self.loans]),
+                'min_loan_size': min(loan.principal for loan in self.loans),
+                'max_loan_size': max(loan.principal for loan in self.loans),
+                'correlation': self.correlation,
+                'attachment_point': self.attachment_point,
+                'detachment_point': self.detachment_point,
+                'security_term_years': self.security_term_years,
+                'security_term_months': self.security_term_months
+            },
+            'loan_details': [],
+            'tranche_details': []
+        }
+        
+        # Individual loan details
+        for loan in self.loans:
+            loan_detail = {
+                'loan_id': loan.id,
+                'principal': loan.principal,
+                'remaining_balance': loan.remaining_balance,
+                'term_years': loan.term_years,
+                'amortization_years': loan.amortization_years,
+                'annual_rate': loan.annual_rate,
+                'monthly_rate': loan.monthly_rate,
+                'annual_prepay_rate': loan.annual_prepay_rate,
+                'monthly_prepay_rate': loan.monthly_prepay_rate,
+                'annual_default_rate': loan.annual_default_rate,
+                'monthly_default_rate': loan.monthly_default_rate,
+                'annual_lgd_rate': loan.annual_lgd_rate,
+                'monthly_lgd_rate': loan.monthly_lgd_rate
+            }
+            loan_info['loan_details'].append(loan_detail)
+        
+        # Tranche details
+        for tranche in self.tranches:
+            tranche_detail = {
+                'name': tranche.name,
+                'attachment_point': tranche.attachment_point,
+                'detachment_point': tranche.detachment_point,
+                'principal': tranche.principal,
+                'attachment_point_pct': f"{tranche.attachment_point * 100:.1f}%",
+                'detachment_point_pct': f"{tranche.detachment_point * 100:.1f}%"
+            }
+            loan_info['tranche_details'].append(tranche_detail)
+        
+        return loan_info
+    
+    def print_loan_summary(self):
+        """Print a formatted summary of loan information"""
+        info = self.dump_loan_information()
+        
+        print("=== MBS LOAN INFORMATION DUMP ===")
+        print(f"Total Loans: {info['summary']['total_loans']}")
+        print(f"Total Principal: ${info['summary']['total_principal']:,.2f}")
+        print(f"Average Loan Size: ${info['summary']['average_loan_size']:,.2f}")
+        print(f"Loan Size Range: ${info['summary']['min_loan_size']:,.2f} - ${info['summary']['max_loan_size']:,.2f}")
+        print(f"Correlation: {info['summary']['correlation']:.3f}")
+        print(f"Security Term: {info['summary']['security_term_years']} years ({info['summary']['security_term_months']} months)")
+        print()
+        
+        print("=== TRANCHE STRUCTURE ===")
+        for tranche in info['tranche_details']:
+            print(f"{tranche['name']}: {tranche['attachment_point_pct']} - {tranche['detachment_point_pct']} (${tranche['principal']:,.2f})")
+        print()
+        
+        print("=== LOAN ASSUMPTIONS SUMMARY ===")
+        rates = [loan['annual_rate'] for loan in info['loan_details']]
+        prepay_rates = [loan['annual_prepay_rate'] for loan in info['loan_details']]
+        default_rates = [loan['annual_default_rate'] for loan in info['loan_details']]
+        lgd_rates = [loan['annual_lgd_rate'] for loan in info['loan_details']]
+        
+        print(f"Interest Rates: {np.mean(rates):.3f} avg ({np.min(rates):.3f} - {np.max(rates):.3f})")
+        print(f"Prepayment Rates: {np.mean(prepay_rates):.3f} avg ({np.min(prepay_rates):.3f} - {np.max(prepay_rates):.3f})")
+        print(f"Default Rates: {np.mean(default_rates):.3f} avg ({np.min(default_rates):.3f} - {np.max(default_rates):.3f})")
+        print(f"Loss Given Default: {np.mean(lgd_rates):.3f} avg ({np.min(lgd_rates):.3f} - {np.max(lgd_rates):.3f})")
+        print()
+        
+        print("=== INDIVIDUAL LOAN DETAILS ===")
+        print("ID | Principal | Rate | Prepay | Default | LGD")
+        print("---|-----------|------|--------|---------|-----")
+        for loan in info['loan_details'][:10]:  # Show first 10 loans
+            print(f"{loan['loan_id']:2d} | ${loan['principal']:8.1f}M | {loan['annual_rate']:.3f} | {loan['annual_prepay_rate']:.3f} | {loan['annual_default_rate']:.3f} | {loan['annual_lgd_rate']:.3f}")
+        if len(info['loan_details']) > 10:
+            print(f"... and {len(info['loan_details']) - 10} more loans")
+        print()
 
 class MBSVisualizer:
     """Visualization class for MBS simulation results"""

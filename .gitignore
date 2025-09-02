@@ -74,3 +74,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Analysis outputs
+analysis_output/
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.pdf
