@@ -442,7 +442,7 @@ class MBSSimulation:
     def _run_monte_carlo_parallel(self, n_simulations: int, seed: int, n_jobs: Optional[int] = None) -> Dict:
         """Run Monte Carlo simulation using parallel processing"""
         if n_jobs is None:
-            n_jobs = min(mp.cpu_count()-1, n_simulations // 50)  # Don't use more cores than needed
+            n_jobs = max(1, min(mp.cpu_count()-2, n_simulations // 100))  # Use even fewer cores
         
         # Generate correlated random variables for all simulations
         np.random.seed(seed)

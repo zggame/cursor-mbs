@@ -1,0 +1,41 @@
+## Commit Message Rules
+
+### **Meaningful Summary**
+- Write clear, descriptive summary of what changes accomplish
+- Focus on **why** and **what** rather than listing files
+- Use present tense ("Add feature" not "Added feature")
+
+### **Summarize Request Prompt**
+- Include context from user's request/prompt
+- Mention main goal or problem being solved
+- Reference specific requirements mentioned
+
+### **Reflect Code Changes**
+- Summarize key changes to codebase
+- Mention new features, bug fixes, or improvements
+- Include significant architectural changes
+
+### **Format Guidelines**
+- Keep first line under 50 characters
+- Use imperative mood ("Add", "Fix", "Update", "Remove")
+- Be specific but concise
+
+### **Good Examples**
+- ✅ "Add correlation impact analysis for MBS risk modeling"
+- ✅ "Fix parallel processing performance in simulation engine"
+- ✅ "Update requirements.txt with new dependencies"
+
+### **Bad Examples**
+- ❌ "Update files" ❌ "Fix stuff" ❌ "Changes"
+
+### **When Analyzing Changes**
+- Look at types of changes (additions, deletions, modifications)
+- Identify main purpose and impact on functionality
+- Extract main objective from user's prompt
+- Reference the problem being solved
+
+Always create commit messages that provide clear context about what was changed and why.
+description:
+globs:
+alwaysApply: true
+---

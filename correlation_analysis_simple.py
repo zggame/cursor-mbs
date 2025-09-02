@@ -47,9 +47,9 @@ def run_correlation_analysis(correlations, n_paths, n_loans=100, mode="analysis"
     for i, correlation in enumerate(correlations):
         print(f"Running correlation {correlation} ({i+1}/{len(correlations)})...")
         start_time = time.time()
-        print(f"  Creating simulation with {n_loans} loans...")
         
         # Create simulation with current correlation
+        print(f"  Creating simulation with {n_loans} loans...")
         simulation = MBSSimulation(
             n_loans=n_loans,
             correlation=correlation,
@@ -63,7 +63,12 @@ def run_correlation_analysis(correlations, n_paths, n_loans=100, mode="analysis"
         # Print loan information for the first correlation
         if i == 0:
             simulation.print_loan_summary()
+            # Export loan information to CSV
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            loan_filename = os.path.join(output_dir, f"loan_information_{mode}_{timestamp}.csv")
+            export_loan_info_to_csv(simulation, loan_filename)
         
+        # Run simulation with parallel processing (fast)
         print(f"  Running Monte Carlo simulation with {n_paths} paths (parallel)...")
         results = simulation.run_monte_carlo(
             n_simulations=n_paths,
@@ -324,6 +329,25 @@ def export_results_to_csv(results_summary, filename):
     df.to_csv(filename, index=False)
     print(f"Summary results exported to: {filename}")
 
+def export_loan_info_to_csv(simulation, filename):
+    """Export loan information to CSV for further analysis"""
+    loan_info = simulation.dump_loan_information()
+    
+    # Export individual loan details
+    loan_df = pd.DataFrame(loan_info['loan_details'])
+    loan_df.to_csv(filename, index=False)
+    print(f"Loan information exported to: {filename}")
+    
+    # Also export summary to a separate file
+    summary_filename = filename.replace('.csv', '_summary.csv')
+    summary_data = {
+        'metric': list(loan_info['summary'].keys()),
+        'value': list(loan_info['summary'].values())
+    }
+    summary_df = pd.DataFrame(summary_data)
+    summary_df.to_csv(summary_filename, index=False)
+    print(f"Loan summary exported to: {summary_filename}")
+
 def main():
     """Main function to run the analysis"""
     
@@ -349,7 +373,7 @@ def main():
     full_correlations = [0.01, 0.1, 0.2, 0.3, 0.4]
     full_results, full_path_data = run_correlation_analysis(
         correlations=full_correlations,
-        n_paths=1000,
+        n_paths=500,  # Reduced from 1000 to prevent memory issues
         n_loans=100,
         mode="full"
     )
